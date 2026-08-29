@@ -50,13 +50,7 @@ import { uploadImage } from "@/server-fn/upload-image";
 
 import { ImageOverlay } from "@/components/docs/image-overlay";
 import { PictureTab } from "@/components/docs/picture-tab";
-import {
-  FontSizePresetList,
-  RibbonFontSizeInput,
-  RibbonGroup,
-  RibbonSelect,
-  ToolButton,
-} from "@/components/docs/ribbon";
+import { RibbonGroup, RibbonSelect, ToolButton } from "@/components/docs/ribbon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -780,7 +774,6 @@ export function WordEditor({ doc }: { doc: Doc }) {
 
   return (
     <div className="flex h-screen flex-col bg-canvas">
-      <FontSizePresetList presets={SIZES} />
       {/* Title bar */}
       <header className="flex items-center gap-3 bg-ribbon px-3 py-2 text-ribbon-foreground">
         <Link
@@ -885,11 +878,21 @@ export function WordEditor({ doc }: { doc: Doc }) {
                 options={FONTS.map((f) => ({ value: f, label: f, style: { fontFamily: f } }))}
                 width="w-36"
               />
-              <RibbonFontSizeInput
+              <RibbonSelect
+                title="Font size"
                 value={size}
-                onCommit={applyFontSize}
-                presets={SIZES}
+                onChange={applyFontSize}
                 onBeforeOpen={captureSelection}
+                width="w-16"
+                // The selection's real size (e.g. a heading's inherited
+                // 15pt) is always present as an option, even when it isn't
+                // one of the presets — same fix as the earlier sync bug,
+                // just applied so a native select can show it too.
+                options={
+                  SIZES.includes(size) || !size
+                    ? SIZES.map((s) => ({ value: s, label: s }))
+                    : [{ value: size, label: size }, ...SIZES.map((s) => ({ value: s, label: s }))]
+                }
               />
               <ToolButton
                 icon={<Bold className="h-4 w-4" />}
