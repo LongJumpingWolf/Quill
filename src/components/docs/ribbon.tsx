@@ -53,19 +53,25 @@ export function RibbonSelect({
   options,
   width = "w-32",
   title,
+  onBeforeOpen,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string; style?: React.CSSProperties }[];
   width?: string;
   title: string;
+  /** Called on mousedown, before the browser shifts focus to this select. */
+  onBeforeOpen?: () => void;
 }) {
   return (
     <select
       title={title}
       aria-label={title}
       value={value}
-      onMouseDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => {
+        onBeforeOpen?.();
+        e.stopPropagation();
+      }}
       onChange={(e) => onChange(e.target.value)}
       className={cn(
         "h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground",
@@ -94,11 +100,14 @@ export function RibbonFontSizeInput({
   value,
   onCommit,
   presets,
+  onBeforeOpen,
 }: {
   /** The live, authoritative size (from the current selection), or "" if unknown/mixed. */
   value: string;
   onCommit: (pt: string) => void;
   presets: string[];
+  /** Called on mousedown, before the browser shifts focus to this input. */
+  onBeforeOpen?: () => void;
 }) {
   const [draft, setDraft] = useState(value);
 
@@ -126,7 +135,10 @@ export function RibbonFontSizeInput({
       aria-label="Font size"
       list="ribbon-font-size-presets"
       value={draft}
-      onMouseDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => {
+        onBeforeOpen?.();
+        e.stopPropagation();
+      }}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {

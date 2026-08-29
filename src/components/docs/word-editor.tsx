@@ -327,9 +327,39 @@ export function WordEditor({ doc }: { doc: Doc }) {
     return () => document.removeEventListener("selectionchange", handler);
   }, [syncToolbarState]);
 
+  /**
+   * Native <select> and <input> ribbon controls can't use the
+   * preventDefault()-on-mousedown trick regular toolbar buttons use to stay
+   * out of the editor's way — that would block the dropdown from opening at
+   * all. So clicking one genuinely steals focus, which collapses the
+   * browser's text selection before onChange ever fires. Capture the range
+   * here, synchronously, before that happens.
+   */
+  const captureSelection = useCallback(() => {
+    const editor = editorRef.current;
+    const sel = window.getSelection();
+    if (editor && sel && sel.rangeCount > 0 && editor.contains(sel.anchorNode)) {
+      savedRange.current = sel.getRangeAt(0).cloneRange();
+    }
+  }, []);
+
+  /** Put the captured range back before running a command, so formatting lands on what was actually selected. */
+  const restoreSelection = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const range = savedRange.current;
+    if (range && editor.contains(range.commonAncestorContainer)) {
+      const sel = window.getSelection();
+      if (!sel) return;
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }, []);
+
   const exec = useCallback(
     (cmd: string, value?: string) => {
-      editorRef.current?.focus();
+      restoreSelection();
       try {
         document.execCommand(cmd, false, value);
       } catch {
@@ -338,7 +368,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
       syncToolbarState();
       handleInput();
     },
-    [handleInput, syncToolbarState],
+    [handleInput, syncToolbarState, restoreSelection],
   );
 
   const insertHTML = useCallback(
@@ -355,7 +385,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
       setSize(pt);
       const editor = editorRef.current;
       if (!editor) return;
-      editor.focus();
+      restoreSelection();
 
       // Mark whatever font[size="7"] tags already exist (e.g. pasted from
       // Word, which really does use that legacy value) so the sweep below
@@ -372,7 +402,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
       });
       handleInput();
     },
-    [handleInput],
+    [handleInput, restoreSelection],
   );
 
   const applyFont = useCallback(
@@ -386,6 +416,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
   const applyLineHeight = useCallback(
     (lh: string) => {
       setLineHeight(lh);
+      restoreSelection();
       const sel = window.getSelection();
       if (!sel || !sel.anchorNode || !editorRef.current) return;
       let node: Node | null = sel.anchorNode;
@@ -397,7 +428,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
         editorRef.current.style.lineHeight = lh;
       }
     },
-    [handleInput],
+    [handleInput, restoreSelection],
   );
 
   const insertTable = useCallback(
@@ -850,10 +881,16 @@ export function WordEditor({ doc }: { doc: Doc }) {
                 title="Font family"
                 value={font}
                 onChange={applyFont}
+                onBeforeOpen={captureSelection}
                 options={FONTS.map((f) => ({ value: f, label: f, style: { fontFamily: f } }))}
                 width="w-36"
               />
-              <RibbonFontSizeInput value={size} onCommit={applyFontSize} presets={SIZES} />
+              <RibbonFontSizeInput
+                value={size}
+                onCommit={applyFontSize}
+                presets={SIZES}
+                onBeforeOpen={captureSelection}
+              />
               <ToolButton
                 icon={<Bold className="h-4 w-4" />}
                 label="Bold"
@@ -986,6 +1023,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
                 title="Line spacing"
                 value={lineHeight}
                 onChange={applyLineHeight}
+                onBeforeOpen={captureSelection}
                 width="w-24"
                 options={[
                   { value: "", label: "Spacing" },
@@ -1001,6 +1039,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
                 title="Paragraph style"
                 value={block}
                 onChange={(v) => exec("formatBlock", v)}
+                onBeforeOpen={captureSelection}
                 width="w-32"
                 options={[
                   { value: "p", label: "Normal text" },
