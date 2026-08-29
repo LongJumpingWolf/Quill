@@ -15,6 +15,8 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.Element = dom.window.Element;
 globalThis.HTMLElement = dom.window.HTMLElement;
+globalThis.NodeFilter = dom.window.NodeFilter;
+globalThis.Range = dom.window.Range;
 
 const { overrideChangedFontSizes, snapshotFontSizes } = await import("../src/lib/font-size.ts");
 
@@ -107,4 +109,97 @@ test("multiple new elements from a multi-paragraph selection all get the size", 
   root.querySelectorAll("p > span").forEach((span) => {
     assert.equal(span.style.fontSize, "16pt");
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* wrapRangeInFontSize — the execCommand-free path                     */
+/* ------------------------------------------------------------------ */
+
+const { wrapRangeInFontSize } = await import("../src/lib/font-size.ts");
+
+function rangeAroundText(container, text) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const idx = node.data.indexOf(text);
+    if (idx !== -1) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + text.length);
+      return range;
+    }
+  }
+  throw new Error(`text not found: ${text}`);
+}
+
+test("wraps a mid-string selection without touching the surrounding text", () => {
+  const root = page("<p>hello world foo</p>");
+  const range = rangeAroundText(root, "world");
+
+  const wrappers = wrapRangeInFontSize(range, "24");
+
+  assert.equal(wrappers.length, 1);
+  assert.equal(wrappers[0].tagName, "SPAN");
+  assert.equal(wrappers[0].style.fontSize, "24pt");
+  assert.equal(wrappers[0].textContent, "world");
+  assert.equal(root.querySelector("p").textContent, "hello world foo");
+});
+
+test("a fully-selected existing element gets wrapped as a whole, not split apart", () => {
+  const root = page("<p>before <b>bold text</b> after</p>");
+  const b = root.querySelector("b");
+  const range = document.createRange();
+  range.selectNodeContents(b);
+
+  const wrappers = wrapRangeInFontSize(range, "18");
+
+  assert.equal(wrappers.length, 1);
+  assert.equal(wrappers[0].style.fontSize, "18pt");
+  // The <b> element itself is untouched — only its text content got a
+  // font-size wrapper nested inside it, preserving the bold.
+  assert.equal(b.contains(wrappers[0]), true);
+  assert.equal(wrappers[0].textContent, "bold text");
+});
+
+test("a selection spanning two paragraphs wraps each one independently", () => {
+  const root = page("<p>first paragraph</p><p>second paragraph</p>");
+  const p1 = root.querySelectorAll("p")[0];
+  const p2 = root.querySelectorAll("p")[1];
+  const range = document.createRange();
+  range.setStart(p1.firstChild, "first ".length);
+  range.setEnd(p2.firstChild, "second".length);
+
+  const wrappers = wrapRangeInFontSize(range, "20");
+
+  assert.equal(wrappers.length, 2);
+  wrappers.forEach((w) => assert.equal(w.style.fontSize, "20pt"));
+  assert.equal(wrappers[0].textContent, "paragraph");
+  assert.equal(wrappers[1].textContent, "second");
+  // Text before/after the selection in each paragraph is untouched.
+  assert.equal(p1.textContent, "first paragraph");
+  assert.equal(p2.textContent, "second paragraph");
+});
+
+test("a collapsed (empty) range wraps nothing", () => {
+  const root = page("<p>hello</p>");
+  const range = document.createRange();
+  range.setStart(root.querySelector("p").firstChild, 2);
+  range.collapse(true);
+
+  const wrappers = wrapRangeInFontSize(range, "20");
+  assert.equal(wrappers.length, 0);
+  assert.equal(root.querySelector("p").textContent, "hello");
+});
+
+test("selecting an entire text node wraps it whole with no leftover empty fragments", () => {
+  const root = page("<p>hello</p>");
+  const p = root.querySelector("p");
+  const range = document.createRange();
+  range.selectNodeContents(p);
+
+  const wrappers = wrapRangeInFontSize(range, "16");
+
+  assert.equal(wrappers.length, 1);
+  assert.equal(wrappers[0].textContent, "hello");
+  assert.equal(p.childNodes.length, 1);
+  assert.equal(p.firstChild, wrappers[0]);
 });

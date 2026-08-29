@@ -51,7 +51,7 @@ import { uploadImage } from "@/server-fn/upload-image";
 import { ImageOverlay } from "@/components/docs/image-overlay";
 import { PictureTab } from "@/components/docs/picture-tab";
 import { RibbonGroup, RibbonSelect, ToolButton } from "@/components/docs/ribbon";
-import { overrideChangedFontSizes, snapshotFontSizes } from "@/lib/font-size";
+import { overrideChangedFontSizes, snapshotFontSizes, wrapRangeInFontSize } from "@/lib/font-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -347,8 +347,18 @@ export function WordEditor({ doc }: { doc: Doc }) {
     if (range && editor.contains(range.commonAncestorContainer)) {
       const sel = window.getSelection();
       if (!sel) return;
-      sel.removeAllRanges();
-      sel.addRange(range);
+      try {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (error) {
+        // A stale Range (detached node, invalid offset after some other DOM
+        // change) throws here — and unguarded, that exception was stopping
+        // the rest of applyFontSize/exec from ever running: the size looked
+        // "picked" in the dropdown but nothing happened to the document at
+        // all, with no visible error. Log it and fall through to whatever
+        // selection focus() left in place, rather than doing nothing.
+        console.error("Could not restore selection:", error);
+      }
     }
   }, []);
 
@@ -381,9 +391,40 @@ export function WordEditor({ doc }: { doc: Doc }) {
       const editor = editorRef.current;
       if (!editor) return;
       restoreSelection();
-      const before = snapshotFontSizes(editor);
-      document.execCommand("fontSize", false, "7");
-      overrideChangedFontSizes(editor, before, pt);
+
+      const sel = window.getSelection();
+      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+
+      if (sel && range && !range.collapsed && editor.contains(range.commonAncestorContainer)) {
+        const wrappers = wrapRangeInFontSize(range, pt);
+        if (wrappers.length > 0) {
+          // Reselect what just got wrapped, so it's still visibly
+          // highlighted and further formatting continues to target it.
+          const first = wrappers[0];
+          const last = wrappers[wrappers.length - 1];
+          if (first && last) {
+            const newRange = document.createRange();
+            newRange.setStartBefore(first);
+            newRange.setEndAfter(last);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+            savedRange.current = newRange.cloneRange();
+          }
+        }
+      } else {
+        // No real (non-collapsed) selection to resize — fall back to
+        // execCommand as a best-effort typing-style setter for the caret,
+        // which is the one case (no highlighted text) it's actually meant
+        // to affect.
+        const before = snapshotFontSizes(editor);
+        try {
+          document.execCommand("fontSize", false, "7");
+        } catch (error) {
+          console.error("execCommand('fontSize') failed:", error);
+        }
+        overrideChangedFontSizes(editor, before, pt);
+      }
+
       handleInput();
     },
     [handleInput, restoreSelection],
