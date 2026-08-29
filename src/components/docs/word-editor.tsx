@@ -50,7 +50,13 @@ import { uploadImage } from "@/server-fn/upload-image";
 
 import { ImageOverlay } from "@/components/docs/image-overlay";
 import { PictureTab } from "@/components/docs/picture-tab";
-import { RibbonGroup, RibbonSelect, ToolButton } from "@/components/docs/ribbon";
+import {
+  FontSizePresetList,
+  RibbonFontSizeInput,
+  RibbonGroup,
+  RibbonSelect,
+  ToolButton,
+} from "@/components/docs/ribbon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -99,6 +105,7 @@ const FONTS = [
 ];
 
 const SIZES = ["8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "48", "72"];
+const LINE_HEIGHT_PRESETS = [1, 1.15, 1.5, 2];
 
 const TEXT_COLORS = [
   "#111827",
@@ -145,6 +152,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
   const [block, setBlock] = useState("p");
   const [font, setFont] = useState<string>(FONTS[0] ?? "Source Serif 4");
   const [size, setSize] = useState("12");
+  const [lineHeight, setLineHeight] = useState("1");
   const [editorEl, setEditorEl] = useState<HTMLDivElement | null>(null);
   const [selectedImage, setSelectedImage] = useState<HTMLElement | null>(null);
   const [cropMode, setCropMode] = useState(false);
@@ -206,6 +214,70 @@ export function WordEditor({ doc }: { doc: Doc }) {
     scheduleSave();
   }, [scheduleSave]);
 
+  /**
+   * The size actually in effect at the caret/selection, read from computed
+   * style rather than assumed — this is what makes the font-size box track
+   * headings, pasted content, or anything set outside applyFontSize.
+   */
+  const readSelectionFontSize = useCallback((): string | null => {
+    const editor = editorRef.current;
+    const sel = window.getSelection();
+    if (!editor || !sel || sel.rangeCount === 0) return null;
+    const node = sel.anchorNode;
+    if (!node || !editor.contains(node)) return null;
+    const el = node instanceof Element ? node : node.parentElement;
+    if (!el) return null;
+    const px = Number.parseFloat(window.getComputedStyle(el).fontSize);
+    if (!Number.isFinite(px)) return null;
+    return String(Math.round(px * 0.75)); // 1pt = 4/3px, so pt = px * 0.75
+  }, []);
+
+  /**
+   * Same idea for font family: the browser reports a computed stack like
+   * `"Georgia, serif"`, quoted and lower-cased inconsistently across
+   * browsers, so this matches it back to whichever entry in FONTS it
+   * actually resolves to rather than requiring an exact string match.
+   */
+  const readSelectionFont = useCallback((): string | null => {
+    const editor = editorRef.current;
+    const sel = window.getSelection();
+    if (!editor || !sel || sel.rangeCount === 0) return null;
+    const node = sel.anchorNode;
+    if (!node || !editor.contains(node)) return null;
+    const el = node instanceof Element ? node : node.parentElement;
+    if (!el) return null;
+    const computed = window.getComputedStyle(el).fontFamily;
+    const first = (computed.split(",")[0] ?? "")
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .toLowerCase();
+    if (!first) return null;
+    return FONTS.find((f) => f.toLowerCase() === first) ?? null;
+  }, []);
+
+  /** Same idea again: the ratio actually applied at the selection, not just the last one picked. */
+  const readSelectionLineHeight = useCallback((): string | null => {
+    const editor = editorRef.current;
+    const sel = window.getSelection();
+    if (!editor || !sel || sel.rangeCount === 0) return null;
+    const node = sel.anchorNode;
+    if (!node || !editor.contains(node)) return null;
+    const el = node instanceof Element ? node : node.parentElement;
+    if (!el) return null;
+    const style = window.getComputedStyle(el);
+    const lineHeightPx = Number.parseFloat(style.lineHeight);
+    const fontSizePx = Number.parseFloat(style.fontSize);
+    if (!Number.isFinite(lineHeightPx) || !Number.isFinite(fontSizePx) || fontSizePx === 0)
+      return null;
+    const ratio = lineHeightPx / fontSizePx;
+    // Snap to the nearest preset within a small tolerance rather than showing
+    // an oddly precise number like "1.48" for what's really "1.5".
+    const closest = LINE_HEIGHT_PRESETS.reduce((best, preset) =>
+      Math.abs(preset - ratio) < Math.abs(best - ratio) ? preset : best,
+    );
+    return Math.abs(closest - ratio) < 0.08 ? String(closest) : "";
+  }, []);
+
   const syncToolbarState = useCallback(() => {
     if (typeof document === "undefined") return;
     const q = (c: string) => {
@@ -215,6 +287,12 @@ export function WordEditor({ doc }: { doc: Doc }) {
         return false;
       }
     };
+    const currentSize = readSelectionFontSize();
+    if (currentSize) setSize(currentSize);
+    const currentFont = readSelectionFont();
+    if (currentFont) setFont(currentFont);
+    const currentLineHeight = readSelectionLineHeight();
+    if (currentLineHeight !== null) setLineHeight(currentLineHeight);
     setActive({
       bold: q("bold"),
       italic: q("italic"),
@@ -235,7 +313,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
     } catch {
       /* noop */
     }
-  }, []);
+  }, [readSelectionFontSize, readSelectionFont, readSelectionLineHeight]);
 
   useEffect(() => {
     const handler = () => {
@@ -275,9 +353,18 @@ export function WordEditor({ doc }: { doc: Doc }) {
   const applyFontSize = useCallback(
     (pt: string) => {
       setSize(pt);
-      editorRef.current?.focus();
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+
+      // Mark whatever font[size="7"] tags already exist (e.g. pasted from
+      // Word, which really does use that legacy value) so the sweep below
+      // only touches the tag execCommand is about to create — not every
+      // size="7" tag anywhere in the document.
+      const before = new Set(editor.querySelectorAll('font[size="7"]'));
       document.execCommand("fontSize", false, "7");
-      editorRef.current?.querySelectorAll('font[size="7"]').forEach((el) => {
+      editor.querySelectorAll('font[size="7"]').forEach((el) => {
+        if (before.has(el)) return;
         const span = document.createElement("span");
         span.style.fontSize = `${pt}pt`;
         span.innerHTML = el.innerHTML;
@@ -296,8 +383,9 @@ export function WordEditor({ doc }: { doc: Doc }) {
     [exec],
   );
 
-  const setLineHeight = useCallback(
+  const applyLineHeight = useCallback(
     (lh: string) => {
+      setLineHeight(lh);
       const sel = window.getSelection();
       if (!sel || !sel.anchorNode || !editorRef.current) return;
       let node: Node | null = sel.anchorNode;
@@ -661,6 +749,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
 
   return (
     <div className="flex h-screen flex-col bg-canvas">
+      <FontSizePresetList presets={SIZES} />
       {/* Title bar */}
       <header className="flex items-center gap-3 bg-ribbon px-3 py-2 text-ribbon-foreground">
         <Link
@@ -764,13 +853,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
                 options={FONTS.map((f) => ({ value: f, label: f, style: { fontFamily: f } }))}
                 width="w-36"
               />
-              <RibbonSelect
-                title="Font size"
-                value={size}
-                onChange={applyFontSize}
-                options={SIZES.map((s) => ({ value: s, label: s }))}
-                width="w-16"
-              />
+              <RibbonFontSizeInput value={size} onCommit={applyFontSize} presets={SIZES} />
               <ToolButton
                 icon={<Bold className="h-4 w-4" />}
                 label="Bold"
@@ -901,8 +984,8 @@ export function WordEditor({ doc }: { doc: Doc }) {
               />
               <RibbonSelect
                 title="Line spacing"
-                value=""
-                onChange={setLineHeight}
+                value={lineHeight}
+                onChange={applyLineHeight}
                 width="w-24"
                 options={[
                   { value: "", label: "Spacing" },

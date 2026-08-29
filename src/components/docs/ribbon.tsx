@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export function RibbonGroup({ label, children }: { label: string; children: ReactNode }) {
@@ -79,5 +79,86 @@ export function RibbonSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+/**
+ * An editable font-size box, the way Word's actually works: it shows
+ * whatever size the current selection really is — including sizes not on
+ * the preset list, like a heading's inherited 15pt — and you can type any
+ * number rather than being limited to the dropdown's fixed options. The
+ * datalist keeps the common presets one click away without restricting
+ * input to just those values.
+ */
+export function RibbonFontSizeInput({
+  value,
+  onCommit,
+  presets,
+}: {
+  /** The live, authoritative size (from the current selection), or "" if unknown/mixed. */
+  value: string;
+  onCommit: (pt: string) => void;
+  presets: string[];
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    const parsed = Number.parseFloat(draft);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      const clamped = String(Math.min(400, Math.round(parsed)));
+      setDraft(clamped);
+      onCommit(clamped);
+    } else {
+      setDraft(value);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      min={1}
+      max={400}
+      title="Font size"
+      aria-label="Font size"
+      list="ribbon-font-size-presets"
+      value={draft}
+      onMouseDown={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      className={cn(
+        "h-8 w-14 rounded-md border border-input bg-card px-2 text-xs text-foreground",
+        "focus:outline-none focus:ring-2 focus:ring-ring/40",
+        // Hide the native spinner so it matches the rest of the ribbon.
+        "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+      )}
+    />
+  );
+}
+
+/** Shared preset list for RibbonFontSizeInput's datalist — render this once near the editor root. */
+export function FontSizePresetList({
+  presets,
+  id = "ribbon-font-size-presets",
+}: {
+  presets: string[];
+  id?: string;
+}) {
+  return (
+    <datalist id={id}>
+      {presets.map((p) => (
+        <option key={p} value={p} />
+      ))}
+    </datalist>
   );
 }
