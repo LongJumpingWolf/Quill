@@ -203,3 +203,73 @@ test("selecting an entire text node wraps it whole with no leftover empty fragme
   assert.equal(p.childNodes.length, 1);
   assert.equal(p.firstChild, wrappers[0]);
 });
+
+/* ------------------------------------------------------------------ */
+/* selectWrappedRange — the "shows the previous size" bug              */
+/* ------------------------------------------------------------------ */
+
+const { selectWrappedRange } = await import("../src/lib/font-size.ts");
+
+/** Mirrors the app's own readSelectionFontSize element-resolution logic. */
+function elementAtSelectionAnchor(node) {
+  return node.nodeType === node.ELEMENT_NODE ? node : node.parentElement;
+}
+
+test("BUG (documented): setStartBefore/setEndAfter anchors at the parent, not the wrapper", () => {
+  const root = page("<p>hello world</p>");
+  const range = rangeAroundText(root, "world");
+  const [wrapper] = wrapRangeInFontSize(range, "18");
+
+  const buggyRange = document.createRange();
+  buggyRange.setStartBefore(wrapper);
+  buggyRange.setEndAfter(wrapper);
+
+  const el = elementAtSelectionAnchor(buggyRange.startContainer);
+  // This is the bug: the anchor resolves to the <p>, not the resized span,
+  // so reading "the current font-size" from it reads the paragraph's size
+  // (stale — whatever it was before) instead of the size just applied.
+  assert.equal(el.tagName, "P");
+  assert.notEqual(el, wrapper);
+});
+
+test("FIX: selectWrappedRange anchors inside the wrapper, so its size reads correctly", () => {
+  const root = page("<p>hello world</p>");
+  const range = rangeAroundText(root, "world");
+  const wrappers = wrapRangeInFontSize(range, "18");
+
+  const fixedRange = selectWrappedRange(wrappers);
+  assert.ok(fixedRange);
+
+  const el = elementAtSelectionAnchor(fixedRange.startContainer);
+  assert.equal(el, wrappers[0]);
+  assert.equal(el.style.fontSize, "18pt");
+});
+
+test("selectWrappedRange spans correctly across multiple wrappers (multi-paragraph resize)", () => {
+  const root = page("<p>first paragraph</p><p>second paragraph</p>");
+  const p1 = root.querySelectorAll("p")[0];
+  const p2 = root.querySelectorAll("p")[1];
+  const range = document.createRange();
+  range.setStart(p1.firstChild, "first ".length);
+  range.setEnd(p2.firstChild, "second".length);
+
+  const wrappers = wrapRangeInFontSize(range, "22");
+  assert.equal(wrappers.length, 2);
+
+  const selected = selectWrappedRange(wrappers);
+  assert.ok(selected);
+  assert.equal(selected.toString(), "paragraphsecond");
+
+  // Both ends resolve to an actual wrapper span, each with the right size —
+  // not to the paragraphs that contain them.
+  const startEl = elementAtSelectionAnchor(selected.startContainer);
+  const endEl = elementAtSelectionAnchor(selected.endContainer);
+  assert.equal(startEl, wrappers[0]);
+  assert.equal(endEl, wrappers[1]);
+  assert.equal(startEl.style.fontSize, "22pt");
+  assert.equal(endEl.style.fontSize, "22pt");
+});
+
+test("selectWrappedRange returns null for an empty wrapper list", () => {
+  assert.equal(selectWrappedRange([]), null);
+});

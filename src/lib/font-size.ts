@@ -53,6 +53,38 @@ export function wrapRangeInFontSize(range: Range, pt: string): HTMLElement[] {
 }
 
 /**
+ * Build a Range that selects the content of wrapper elements (as returned
+ * by wrapRangeInFontSize) — anchored INSIDE their text, not at their outer
+ * element boundary.
+ *
+ * This matters because Range.setStartBefore/setEndAfter position a boundary
+ * in the PARENT node at a child-index offset, not inside the element itself.
+ * Selection.anchorNode then resolves to the parent, not the wrapper — so
+ * anything reading "the element at the current selection" (like a font-size
+ * readback after applying a new size) sees the parent's font-size instead
+ * of the size that was just applied, and appears to lag one step behind
+ * every time, only catching up once the selection is cleared and re-read
+ * from scratch.
+ */
+export function selectWrappedRange(wrappers: HTMLElement[]): Range | null {
+  const first = wrappers[0];
+  const last = wrappers[wrappers.length - 1];
+  if (!first || !last) return null;
+
+  const range = document.createRange();
+  range.setStart(first.firstChild ?? first, 0);
+
+  const endNode = last.lastChild ?? last;
+  if (endNode.nodeType === endNode.TEXT_NODE) {
+    range.setEnd(endNode, (endNode as Text).data.length);
+  } else {
+    range.setEnd(endNode, endNode.childNodes.length);
+  }
+
+  return range;
+}
+
+/**
  * Helpers for applying a font size via execCommand.
  *
  * execCommand("fontSize", …, "7") is used only to make the browser do the

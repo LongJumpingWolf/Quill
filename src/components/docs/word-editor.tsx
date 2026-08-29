@@ -51,7 +51,12 @@ import { uploadImage } from "@/server-fn/upload-image";
 import { ImageOverlay } from "@/components/docs/image-overlay";
 import { PictureTab } from "@/components/docs/picture-tab";
 import { RibbonGroup, RibbonSelect, ToolButton } from "@/components/docs/ribbon";
-import { overrideChangedFontSizes, snapshotFontSizes, wrapRangeInFontSize } from "@/lib/font-size";
+import {
+  overrideChangedFontSizes,
+  selectWrappedRange,
+  snapshotFontSizes,
+  wrapRangeInFontSize,
+} from "@/lib/font-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -397,19 +402,14 @@ export function WordEditor({ doc }: { doc: Doc }) {
 
       if (sel && range && !range.collapsed && editor.contains(range.commonAncestorContainer)) {
         const wrappers = wrapRangeInFontSize(range, pt);
-        if (wrappers.length > 0) {
-          // Reselect what just got wrapped, so it's still visibly
-          // highlighted and further formatting continues to target it.
-          const first = wrappers[0];
-          const last = wrappers[wrappers.length - 1];
-          if (first && last) {
-            const newRange = document.createRange();
-            newRange.setStartBefore(first);
-            newRange.setEndAfter(last);
-            sel.removeAllRanges();
-            sel.addRange(newRange);
-            savedRange.current = newRange.cloneRange();
-          }
+        // Reselect what just got wrapped, so it's still visibly highlighted
+        // and further formatting (including reading the size back into this
+        // same box) continues to target the actual resized text.
+        const newRange = selectWrappedRange(wrappers);
+        if (newRange) {
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+          savedRange.current = newRange.cloneRange();
         }
       } else {
         // No real (non-collapsed) selection to resize — fall back to
