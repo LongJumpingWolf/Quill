@@ -415,7 +415,13 @@ export function WordEditor({ doc }: { doc: Doc }) {
         // No real (non-collapsed) selection to resize — fall back to
         // execCommand as a best-effort typing-style setter for the caret,
         // which is the one case (no highlighted text) it's actually meant
-        // to affect.
+        // to affect. If this fires while you DID have text highlighted, the
+        // selection was lost before this ran — worth knowing, since this
+        // fallback is the less reliable path.
+        console.warn(
+          "applyFontSize: no active text selection found, falling back to execCommand. " +
+            "If you had text highlighted, the selection was lost before this ran.",
+        );
         const before = snapshotFontSizes(editor);
         try {
           document.execCommand("fontSize", false, "7");
@@ -880,7 +886,15 @@ export function WordEditor({ doc }: { doc: Doc }) {
       </nav>
 
       {/* Ribbon content */}
-      <div className="flex min-h-[74px] items-stretch overflow-x-auto border-b border-border bg-card px-2 py-1.5 shadow-[var(--shadow-ribbon)]">
+      <div
+        className="flex min-h-[74px] items-stretch overflow-x-auto border-b border-border bg-card px-2 py-1.5 shadow-[var(--shadow-ribbon)]"
+        // Capture phase, at this level, so it runs before the browser's
+        // default focus-shift for ANY control here — a select, an input,
+        // anything — regardless of which specific element gets touched.
+        // Per-control onBeforeOpen props are extra insurance on top of this,
+        // not a replacement for it.
+        onPointerDownCapture={captureSelection}
+      >
         {tab === "Home" && (
           <>
             <RibbonGroup label="Clipboard">
