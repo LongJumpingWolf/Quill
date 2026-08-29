@@ -51,6 +51,7 @@ import { uploadImage } from "@/server-fn/upload-image";
 import { ImageOverlay } from "@/components/docs/image-overlay";
 import { PictureTab } from "@/components/docs/picture-tab";
 import { RibbonGroup, RibbonSelect, ToolButton } from "@/components/docs/ribbon";
+import { overrideChangedFontSizes, snapshotFontSizes } from "@/lib/font-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -380,20 +381,9 @@ export function WordEditor({ doc }: { doc: Doc }) {
       const editor = editorRef.current;
       if (!editor) return;
       restoreSelection();
-
-      // Mark whatever font[size="7"] tags already exist (e.g. pasted from
-      // Word, which really does use that legacy value) so the sweep below
-      // only touches the tag execCommand is about to create — not every
-      // size="7" tag anywhere in the document.
-      const before = new Set(editor.querySelectorAll('font[size="7"]'));
+      const before = snapshotFontSizes(editor);
       document.execCommand("fontSize", false, "7");
-      editor.querySelectorAll('font[size="7"]').forEach((el) => {
-        if (before.has(el)) return;
-        const span = document.createElement("span");
-        span.style.fontSize = `${pt}pt`;
-        span.innerHTML = el.innerHTML;
-        el.replaceWith(span);
-      });
+      overrideChangedFontSizes(editor, before, pt);
       handleInput();
     },
     [handleInput, restoreSelection],
