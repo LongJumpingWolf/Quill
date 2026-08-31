@@ -57,6 +57,7 @@ import {
   snapshotFontSizes,
   wrapRangeInFontSize,
 } from "@/lib/font-size";
+import { resolvePastedHtml } from "@/lib/paste";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -491,11 +492,12 @@ export function WordEditor({ doc }: { doc: Doc }) {
 
       const fragment = range.createContextualFragment(html);
       const inserted = fragment.firstElementChild;
+      const lastNode = fragment.lastChild;
       range.insertNode(fragment);
 
-      if (inserted instanceof HTMLElement) {
+      if (lastNode) {
         const after = document.createRange();
-        after.setStartAfter(inserted);
+        after.setStartAfter(lastNode);
         after.collapse(true);
         const selection = window.getSelection();
         selection?.removeAllRanges();
@@ -634,7 +636,26 @@ export function WordEditor({ doc }: { doc: Doc }) {
         insertImageFile(file);
         return;
       }
-      // Pasted HTML can carry bare <img> tags — adopt them once the paste lands.
+
+      // Sites like ChatGPT and Claude render markdown, but their "Copy"
+      // button often puts only raw markdown text on the clipboard — no
+      // text/html at all. Left to the browser's default paste, that lands
+      // as literal "**bold**" and "# Heading" characters instead of actual
+      // formatting. Take over paste entirely: use real HTML if the
+      // clipboard has substantive HTML, otherwise parse markdown syntax out
+      // of the plain text, otherwise fall back to plain paragraphs — and
+      // sanitize whatever we're about to insert either way, since clipboard
+      // content is untrusted input regardless of its source.
+      const html = event.clipboardData?.getData("text/html") ?? "";
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (!html && !text) return; // nothing usable; let the browser try
+
+      event.preventDefault();
+      const resolved = resolvePastedHtml(html, text);
+      if (resolved) insertAtCaret(resolved);
+
+      // Pasted HTML can also carry bare <img> tags — adopt them once the
+      // paste lands.
       window.setTimeout(() => {
         if (normalizeImages(editor)) {
           handleInput();
@@ -653,7 +674,7 @@ export function WordEditor({ doc }: { doc: Doc }) {
       editor.removeEventListener("drop", onDrop);
       editor.removeEventListener("paste", onPaste);
     };
-  }, [editorEl, insertImageFile, handleInput, bumpImage]);
+  }, [editorEl, insertImageFile, insertAtCaret, handleInput, bumpImage]);
 
   // Arrow keys nudge the selected picture; Delete removes it; Escape deselects.
   useEffect(() => {
