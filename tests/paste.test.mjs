@@ -15,6 +15,7 @@ import { JSDOM } from "jsdom";
 const dom = new JSDOM("<!doctype html><body></body>");
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
+globalThis.DOMParser = dom.window.DOMParser;
 
 // DOMPurify needs a real window to sanitize against; in a browser it uses
 // the global one automatically, but under Node it has to be constructed
@@ -22,7 +23,10 @@ globalThis.document = dom.window.document;
 const purify = DOMPurifyFactory(dom.window);
 
 const {
+  extractImportedBody,
+  extractImportedTitle,
   hasSubstantiveHtml,
+  importHtmlFile,
   looksLikeMarkdown,
   markdownToHtml,
   plainTextToHtml,
@@ -195,4 +199,76 @@ test("hasSubstantiveHtml distinguishes real formatting from a bare wrapper", () 
   assert.equal(hasSubstantiveHtml("<p>Some <strong>bold</strong> text</p>"), true);
   assert.equal(hasSubstantiveHtml("<h2>Heading</h2>"), true);
   assert.equal(hasSubstantiveHtml('<a href="x">link</a>'), true);
+});
+
+/* ------------------------------------------------------------------ */
+/* Importing a whole uploaded .html file                               */
+/* ------------------------------------------------------------------ */
+
+test("extracts body content from a complete HTML document", () => {
+  const doc =
+    "<!doctype html><html><head><title>My Doc</title></head><body><h1>Hi</h1><p>text</p></body></html>";
+  const body = extractImportedBody(doc);
+  assert.match(body, /<h1>Hi<\/h1>/);
+  assert.match(body, /<p>text<\/p>/);
+  assert.ok(!body.includes("<title>"));
+});
+
+test("extracts a bare fragment (no document shell) as-is", () => {
+  const body = extractImportedBody("<p>just a fragment</p>");
+  assert.match(body, /<p>just a fragment<\/p>/);
+});
+
+test("extracts the document's <title> for use as the imported doc's name", () => {
+  const doc = "<html><head><title>Quarterly Report</title></head><body><p>x</p></body></html>";
+  assert.equal(extractImportedTitle(doc), "Quarterly Report");
+});
+
+test("returns null title when the document has none, rather than an empty string", () => {
+  assert.equal(extractImportedTitle("<p>no title here</p>"), null);
+  assert.equal(
+    extractImportedTitle("<html><head><title>   </title></head><body></body></html>"),
+    null,
+  );
+});
+
+test("importHtmlFile: a realistic exported document imports cleanly end to end", () => {
+  const exported = [
+    "<!doctype html>",
+    "<html><head><title>Meeting Notes</title></head><body>",
+    "<h1>Meeting Notes</h1>",
+    "<p>Attendees: <strong>Alice</strong>, <strong>Bob</strong></p>",
+    "<ul><li>Discussed roadmap</li><li>Reviewed budget</li></ul>",
+    "<script>alert('should be stripped')</script>",
+    "</body></html>",
+  ].join("");
+
+  const { html, title } = importHtmlFile(exported, "fallback", purify);
+  assert.equal(title, "Meeting Notes");
+  assert.match(html, /<h1>Meeting Notes<\/h1>/);
+  assert.match(html, /<strong>Alice<\/strong>/);
+  assert.equal((html.match(/<li>/g) ?? []).length, 2);
+  assert.ok(!html.includes("script"), "script tag must be stripped");
+});
+
+test("importHtmlFile falls back to the given title when the document has none", () => {
+  const { title } = importHtmlFile("<p>no title in this one</p>", "notes.html", purify);
+  assert.equal(title, "notes.html");
+});
+
+test("importHtmlFile strips a malicious payload the same as any other untrusted HTML", () => {
+  const malicious =
+    '<body><p onclick="steal()">click me</p><a href="javascript:steal()">link</a></body>';
+  const { html } = importHtmlFile(malicious, "evil.html", purify);
+  assert.ok(!html.includes("onclick"));
+  assert.ok(!html.includes("javascript:"));
+});
+
+test("importHtmlFile preserves a table structure, common in exported documents", () => {
+  const withTable =
+    "<body><table><thead><tr><th>Name</th></tr></thead><tbody><tr><td>Alice</td></tr></tbody></table></body>";
+  const { html } = importHtmlFile(withTable, "table.html", purify);
+  assert.match(html, /<table>/);
+  assert.match(html, /<th>Name<\/th>/);
+  assert.match(html, /<td>Alice<\/td>/);
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   AlignCenter,
   AlignJustify,
@@ -15,6 +15,7 @@ import {
   Download,
   Eraser,
   FileDown,
+  FileUp,
   Highlighter,
   Image as ImageIcon,
   Indent,
@@ -57,7 +58,7 @@ import {
   snapshotFontSizes,
   wrapRangeInFontSize,
 } from "@/lib/font-size";
-import { resolvePastedHtml } from "@/lib/paste";
+import { importHtmlFile, resolvePastedHtml } from "@/lib/paste";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -71,7 +72,15 @@ import {
   readImage,
   updateImage,
 } from "@/lib/doc-images";
-import { MARGINS, PAGE_DIMS, countStats, relativeTime, updateDoc, type Doc } from "@/lib/docs";
+import {
+  MARGINS,
+  PAGE_DIMS,
+  countStats,
+  createDoc,
+  relativeTime,
+  updateDoc,
+  type Doc,
+} from "@/lib/docs";
 
 const TABS = ["Home", "Insert", "Layout", "Review", "View"] as const;
 /** "Picture" is contextual: it only appears while a picture is selected. */
@@ -133,6 +142,7 @@ const HIGHLIGHTS = [
 ];
 
 export function WordEditor({ doc }: { doc: Doc }) {
+  const navigate = useNavigate();
   const editorRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<Tab>("Home");
   const [title, setTitle] = useState(doc.title);
@@ -769,6 +779,29 @@ export function WordEditor({ doc }: { doc: Doc }) {
     return text.split(findText).length - 1;
   }, [findText, stats]);
 
+  /**
+   * Import creates a NEW document rather than overwriting the one currently
+   * open — the same relationship "File > Open" has to your current window
+   * in a desktop app. Overwriting whatever you were already editing would
+   * be a surprising way for an import button to behave.
+   */
+  const importHtmlFileInput = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result !== "string") return;
+        const fallbackTitle = file.name.replace(/\.html?$/i, "") || "Imported document";
+        const { html, title: importedTitle } = importHtmlFile(reader.result, fallbackTitle);
+        const created = createDoc({ html, title: importedTitle });
+        toast.success(`Imported "${importedTitle}"`);
+        void navigate({ to: "/doc/$id", params: { id: created.id } });
+      };
+      reader.onerror = () => toast.error("Could not read that file.");
+      reader.readAsText(file);
+    },
+    [navigate],
+  );
+
   const exportHtml = useCallback(
     (kind: "doc" | "html" | "txt") => {
       const content = editorRef.current?.innerHTML ?? "";
@@ -866,6 +899,19 @@ export function WordEditor({ doc }: { doc: Doc }) {
             onClick={() => exec("redo")}
           />
           <span className="mx-1 h-5 w-px bg-white/20" />
+          <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-secondary/80">
+            <FileUp className="h-4 w-4" /> Import
+            <input
+              type="file"
+              accept=".html,.htm,text/html"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) importHtmlFileInput(file);
+                event.target.value = "";
+              }}
+            />
+          </label>
           <Button size="sm" variant="secondary" onClick={() => window.print()}>
             <Printer className="mr-1.5 h-4 w-4" /> Print
           </Button>

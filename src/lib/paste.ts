@@ -50,23 +50,49 @@ const ALLOWED_TAGS = [
   "s",
   "strike",
   "del",
+  "sup",
+  "sub",
+  "small",
+  "mark",
   "a",
   "ul",
   "ol",
   "li",
+  "dl",
+  "dt",
+  "dd",
   "blockquote",
+  "q",
+  "cite",
   "code",
+  "kbd",
+  "samp",
+  "var",
   "pre",
   "table",
   "thead",
   "tbody",
+  "tfoot",
+  "caption",
+  "colgroup",
+  "col",
   "tr",
   "th",
   "td",
   "hr",
   "span",
   "div",
+  "section",
+  "article",
+  "header",
+  "footer",
+  "figure",
+  "figcaption",
+  "abbr",
+  "time",
   "img",
+  "font",
+  "center",
 ];
 
 const ALLOWED_ATTR = [
@@ -80,6 +106,11 @@ const ALLOWED_ATTR = [
   "title",
   "colspan",
   "rowspan",
+  "datetime",
+  "cite",
+  "size",
+  "color",
+  "face",
 ];
 
 /**
@@ -146,4 +177,47 @@ export function resolvePastedHtml(
   if (html && hasSubstantiveHtml(html)) return sanitizeHtml(html, purify);
   if (looksLikeMarkdown(text)) return markdownToHtml(text, purify);
   return plainTextToHtml(text);
+}
+
+/* ------------------------------------------------------------------ */
+/* Importing a whole uploaded .html file                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pull the editable content out of an uploaded HTML file. Handles both a
+ * complete document (the common case — a page saved from a browser, or
+ * exported from Word/Google Docs/Notion/etc., with a full <html><head>
+ * <body> structure) and a bare fragment (just markup, no document shell),
+ * by using DOMParser rather than string-slicing, so malformed or
+ * unexpected structure fails gracefully instead of producing garbage.
+ */
+export function extractImportedBody(fileContents: string): string {
+  const parsed = new DOMParser().parseFromString(fileContents, "text/html");
+  // A bare fragment still parses successfully — DOMParser wraps it in a
+  // synthetic <html><body>, so .body.innerHTML is correct either way.
+  return parsed.body?.innerHTML ?? fileContents;
+}
+
+/** The document's own <title>, if it has one — used as the imported doc's name. */
+export function extractImportedTitle(fileContents: string): string | null {
+  const parsed = new DOMParser().parseFromString(fileContents, "text/html");
+  const title = parsed.title.trim();
+  return title.length > 0 ? title : null;
+}
+
+/**
+ * Full pipeline for an uploaded .html/.htm file: extract the body, strip
+ * anything dangerous (an uploaded HTML file is just as untrusted as
+ * clipboard content — it could be a page saved from anywhere), and hand
+ * back both the sanitized markup and a title to use for the new document.
+ */
+export function importHtmlFile(
+  fileContents: string,
+  fallbackTitle: string,
+  purify: typeof DOMPurify = DOMPurify,
+): { html: string; title: string } {
+  const body = extractImportedBody(fileContents);
+  const html = sanitizeHtml(body, purify);
+  const title = extractImportedTitle(fileContents) ?? fallbackTitle;
+  return { html, title };
 }
